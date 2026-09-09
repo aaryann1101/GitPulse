@@ -75,7 +75,7 @@ export default function RepositoriesPage() {
       id: "compare",
       header: "Compare",
       width: 78,
-      align: "center",
+      align: "left",
       cell: (r) => (
         <input
           type="checkbox"
