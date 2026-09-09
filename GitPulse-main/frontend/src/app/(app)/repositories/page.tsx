@@ -1,0 +1,375 @@
+"use client";
+
+import dynamic from "next/dynamic";
+import { BarChart3, BookMarked, ExternalLink, SearchX, Sparkles, Star, X } from "lucide-react";
+import { useEffect, useState } from "react";
+
+import { Panel } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Column, DataTable, Pagination, SortHeader } from "@/components/ui/data-table";
+import { Tabs, TabsList, TabsTrigger, Tooltip } from "@/components/ui/overlays";
+import { Badge, EmptyState, PageHeading, SearchInput } from "@/components/ui/primitives";
+import type { RepoSort, SortOrder, Visibility } from "@/lib/api";
+import { comma, formatDate, languageColor, relativeTime } from "@/lib/format";
+import type { Repo } from "@/lib/types";
+import { useDebounced, useReposOverview, useRepos, useRepoComparison } from "@/lib/hooks";
+import { usePrefs } from "@/lib/prefs";
+
+/**
+ * The drawer renders nothing until a row is clicked, but it pulls in Recharts for
+ * the star-history chart — which was landing in the initial bundle of a page whose
+ * whole job is to show a table. Deferred until it is actually opened.
+ */
+const RepoDrawer = dynamic(
+  () => import("@/components/repos/repo-drawer").then((m) => m.RepoDrawer),
+  { ssr: false },
+);
+
+export default function RepositoriesPage() {
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Repo | null>(null);
+  const [compareNames, setCompareNames] = useState<string[]>([]);
+
+  const [sort, setSort] = useState<RepoSort>("stars");
+  const [order, setOrder] = useState<SortOrder>("desc");
+  const [visibility, setVisibility] = useState<Visibility>("all");
+
+  const { prefs } = usePrefs();
+  const perPage = prefs.pageSize;
+  const debounced = useDebounced(search);
+
+  // Any change to the result set must return to page 1 — otherwise you can be
+  // stranded on page 4 of a list that now has two pages.
+  useEffect(() => setPage(1), [debounced, perPage, sort, order, visibility]);
+
+  const q = useRepos({
+    page,
+    per_page: perPage,
+    search: debounced,
+    sort,
+    order,
+    visibility,
+  });
+
+  // Counts for the scope tabs come from the overview, not the paged list, so they
+  // show the full totals rather than what happens to be on this page.
+  const overview = useReposOverview();
+
+  const onSort = (field: RepoSort, next: SortOrder) => {
+    setSort(field);
+    setOrder(next);
+  };
+  const rows = q.data?.data ?? [];
+  const total = q.data?.total ?? 0;
+  const comparison = useRepoComparison(compareNames, 30);
+
+  const toggleCompare = (name: string) => {
+    setCompareNames((current) =>
+      current.includes(name) ? current.filter((n) => n !== name) : current.length < 4 ? [...current, name] : current,
+    );
+  };
+
+  const columns: Column<Repo>[] = [
+    {
+      id: "compare",
+      header: "Compare",
+      width: 78,
+      align: "center",
+      cell: (r) => (
+        <input
+          type="checkbox"
+          checked={compareNames.includes(r.name)}
+          disabled={!compareNames.includes(r.name) && compareNames.length >= 4}
+          onChange={() => toggleCompare(r.name)}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Compare ${r.name}`}
+          className="size-3.5 accent-[var(--brand)]"
+        />
+      ),
+    },
+    {
+      id: "name",
+      header: (
+        <SortHeader
+          label="Repository"
+          field="name"
+          active={sort}
+          order={order}
+          onSort={onSort}
+        />
+      ),
+      minWidth: 220,
+      cell: (r) => (
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[13.5px] font-medium text-ink">{r.name}</span>
+            {r.is_private && <Badge tone="warning">Private</Badge>}
+            {r.is_fork && <Badge tone="neutral">Fork</Badge>}
+            {r.is_archived && <Badge tone="neutral">Archived</Badge>}
+          </div>
+          {r.description && (
+            <p className="mt-0.5 truncate text-[12px] text-ink-3">{r.description}</p>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: "analysis",
+      header: "Analysis report",
+      width: 130,
+      cell: (r) => (
+        <Tooltip content="AI repository analysis — shipping in the next update">
+          {/* Deliberately inert: present in the UI so the column exists, but it
+              does nothing yet. aria-disabled + disabled keeps it out of the tab
+              order and announces it correctly rather than faking a live control. */}
+          <span className="inline-flex">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled
+              aria-disabled
+              aria-label={`Analysis report for ${r.name} — coming soon`}
+              onClick={(e) => e.stopPropagation()}
+              className="gap-1.5 text-ink-3"
+            >
+              <Sparkles className="size-3.5" />
+              Analyse
+            </Button>
+          </span>
+        </Tooltip>
+      ),
+    },
+    {
+      id: "language",
+      header: "Language",
+      width: 140,
+      cell: (r) =>
+        r.language ? (
+          <span className="flex items-center gap-2 text-[12.5px] text-ink-2">
+            <span
+              className="size-2.5 shrink-0 rounded-full"
+              style={{ background: languageColor(r.language) }}
+              aria-hidden
+            />
+            <span className="truncate">{r.language}</span>
+          </span>
+        ) : (
+          <span className="text-[12.5px] text-ink-3">—</span>
+        ),
+    },
+    {
+      id: "stars",
+      header: (
+        <SortHeader
+          label="Stars"
+          field="stars"
+          active={sort}
+          order={order}
+          onSort={onSort}
+          align="right"
+        />
+      ),
+      width: 110,
+      align: "right",
+      cell: (r) => (
+        <span className="tnum inline-flex items-center gap-1.5 text-[12.5px] text-ink-2">
+          <Star className="size-3 text-ink-3" />
+          {comma(r.stars)}
+        </span>
+      ),
+    },
+    {
+      id: "views",
+      header: (
+        <SortHeader
+          label="Views"
+          field="views_all_time"
+          active={sort}
+          order={order}
+          onSort={onSort}
+          align="right"
+        />
+      ),
+      width: 110,
+      align: "right",
+      /**
+       * `views_all_time`, not `traffic_views_total`. The latter is GitHub's rolling
+       * 14-day window, which is all GitHub itself will ever tell you — so the column
+       * silently reported "views in the last fortnight" under a heading that reads as
+       * a lifetime total, and the number went *down* as older days aged out.
+       *
+       * `views_all_time` is accumulated day-by-day in traffic_daily and is the whole
+       * history we hold. It is what the repo drawer has always shown, so the table
+       * and the drawer disagreed on the same repository.
+       */
+      cell: (r) => (
+        <span
+          className="tnum text-[12.5px] text-ink-2"
+          title={`${comma(r.views_all_time)} views over ${r.traffic_days_recorded} recorded days`}
+        >
+          {comma(r.views_all_time)}
+        </span>
+      ),
+    },
+    {
+      id: "updated",
+      header: (
+        <SortHeader
+          label="Last commit"
+          field="pushed_at"
+          active={sort}
+          order={order}
+          onSort={onSort}
+          align="right"
+        />
+      ),
+      width: 150,
+      align: "right",
+      // pushed_at, not updated_at: updated_at moves whenever any metadata changes
+      // (a description edit, someone starring it), which is not "last updated"
+      // in the sense anyone reading this column means.
+      cell: (r) => (
+        <Tooltip content={formatDate(r.pushed_at)}>
+          <span className="cursor-default text-[12.5px] text-ink-3">
+            {relativeTime(r.pushed_at)}
+          </span>
+        </Tooltip>
+      ),
+    },
+    {
+      id: "link",
+      header: "",
+      width: 56,
+      align: "right",
+      cell: (r) => (
+        <Button size="icon" variant="ghost" asChild className="size-8">
+          <a
+            href={r.html_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Open ${r.name} on GitHub`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ExternalLink className="size-3.5" />
+          </a>
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-8">
+      <PageHeading
+        title="Repositories"
+        description="Traffic, stars and clones for everything you own. Select a row for detail."
+      />
+
+      {compareNames.length > 0 && (
+        <Panel className="overflow-hidden border-brand/20">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline px-5 py-4">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+                <BarChart3 className="size-4 text-brand" />
+                Repository performance
+              </div>
+              <p className="mt-1 text-xs text-ink-3">Compare up to four repositories across the latest recorded traffic window.</p>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setCompareNames([])} className="gap-1.5">
+              <X className="size-3.5" /> Clear
+            </Button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] text-left">
+              <thead className="border-b border-hairline bg-white/[0.02] text-[10px] uppercase tracking-wider text-ink-3">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Repository</th>
+                  <th className="px-4 py-3 text-right font-medium">Stars</th>
+                  <th className="px-4 py-3 text-right font-medium">Forks</th>
+                  <th className="px-4 py-3 text-right font-medium">30d views</th>
+                  <th className="px-4 py-3 text-right font-medium">30d clones</th>
+                  <th className="px-5 py-3 text-right font-medium">Commits</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-hairline">
+                {comparison.data?.data.map((r) => (
+                  <tr key={r.name} className="text-[12.5px]">
+                    <td className="px-5 py-3 font-medium text-ink">{r.name}</td>
+                    <td className="tnum px-4 py-3 text-right text-ink-2">{comma(r.stars)}</td>
+                    <td className="tnum px-4 py-3 text-right text-ink-2">{comma(r.forks)}</td>
+                    <td className="tnum px-4 py-3 text-right text-ink-2">{comma(r.views_window)}</td>
+                    <td className="tnum px-4 py-3 text-right text-ink-2">{comma(r.clones_window)}</td>
+                    <td className="tnum px-5 py-3 text-right text-ink-2">{comma(r.commits_total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {comparison.data?.data.length === 0 && (
+            <div className="px-5 py-6 text-center text-xs text-ink-3">No matching repository data.</div>
+          )}
+        </Panel>
+      )}
+
+      <Panel className="overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-hairline px-5 py-4">
+          {/* Scope narrows what is searched and counted — it's applied server-side,
+              so the totals and pagination reflect the scope, not just the page. */}
+          <Tabs value={visibility} onValueChange={(v) => setVisibility(v as Visibility)}>
+            <TabsList>
+              <TabsTrigger value="all" count={overview.data?.total_repos}>
+                All
+              </TabsTrigger>
+              <TabsTrigger value="public" count={overview.data?.public_repos}>
+                Public
+              </TabsTrigger>
+              <TabsTrigger value="private" count={overview.data?.private_repos}>
+                Private
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Search repositories…"
+            busy={q.isFetching && !!debounced}
+            className="w-full sm:w-72"
+          />
+        </div>
+
+        <DataTable
+          columns={columns}
+          rows={rows}
+          loading={q.isLoading}
+          rowKey={(r) => r.name}
+          onRowClick={setSelected}
+          empty={
+            debounced ? (
+              <EmptyState
+                icon={<SearchX className="size-6" />}
+                title={`No results for “${debounced}”`}
+                description="Try a different repository name."
+                action={
+                  <Button variant="secondary" size="sm" onClick={() => setSearch("")}>
+                    Clear search
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                icon={<BookMarked className="size-6" />}
+                title="No repositories synced"
+                description="Run a sync to pull your repositories from GitHub."
+              />
+            )
+          }
+        />
+
+        <Pagination page={page} perPage={perPage} total={total} onPage={setPage} />
+      </Panel>
+
+      <RepoDrawer repo={selected} onClose={() => setSelected(null)} />
+    </div>
+  );
+}
