@@ -165,7 +165,7 @@ export function Hero() {
             </Magnetic>
             <Button asChild variant="secondary" size="lg">
               <a
-                href="https://github.com/KalyanM45"
+                href="https://github.com/aaryann1101/GitPulse"
                 target="_blank"
                 rel="noopener noreferrer"
               >
